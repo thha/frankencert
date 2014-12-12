@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+import argparse
+import csv
 import os
 import re
 import subprocess
@@ -22,8 +24,8 @@ IGNORE_ERR_MSG = {
 }
 
 
-def run_server_func(cert_num, port_num):
-    os.system("python utils/test_ssl_server.py output/frankencert-{}.pem {}".format(cert_num, port_num))
+def run_server_func(cert_path, cert_num, port_num):
+    os.system("python utils/test_ssl_server.py {}/frankencert-{}.pem {}".format(cert_path, cert_num, port_num))
 
 
 def test_openssl(cert_num, port_num):
@@ -60,33 +62,75 @@ def test_gnutls(cert_num, port_num):
     return result
 
 
-sp = []
-test_rel = {}
-for i in range(200):
-    print "Test cert {}".format(i)
-
-    for pnum in [4433, 4434]:
-        p = Process(target=run_server_func, args=(i, pnum))
-        p.start()
-        sp.append(p)
-
-    time.sleep(1)
-    r1 = test_openssl(i, 4433)
-    r2 = test_gnutls(i, 4434)
-
-    test_rel[i] = (r1, r2)
-
-    for p in sp:
-        p.join()
-
-    sp = sp[:]
 
 
-count = 0
-for k, v in test_rel.iteritems():
-    print "Cert {}: ({}, {})".format(k, v[0], v[1])
-    if v[0] != v[1]:
-        count += 1
 
-print "Differential count: ", count
+parser = argparse.ArgumentParser()
+parser.add_argument("--gen_method", choices=["original", "improved"], default="original")
+parser.add_argument("cert_path")
+parser.add_argument("base_portnum", type=int)
+parser.add_argument("cert_num", type=int, nargs="+")
+parser.add_argument("--out", dest="outfile")
+parser.add_argument("--repeat", type=int, default=1)
 
+args = parser.parse_args()
+
+if args.gen_method == "original":
+    generator = "frankengen/franken_generate.py"
+else:
+    generator = "frankengen/franken_generate_r.py"
+
+f = None
+csvw = None
+if args.outfile:
+    f = open(args.outfile, "w")
+    csvw = csv.writer(f)
+
+if csvw:
+    csvw.writerow(["cert_num", "openssl", "gnutls", "diff"])
+
+for cert_num in args.cert_num:
+    for r in range(args.repeat):
+        os.system("python {} \
+                utils/valid_certs/ utils/rootCA_key_cert.pem \
+                {} {}".format(generator, args.cert_path, cert_num))
+        sp = []
+        test_rel = {}
+        for i in range(cert_num):
+            print "Test cert {}".format(i)
+
+            for pnum in [args.base_portnum, args.base_portnum + 1]:
+                p = Process(target=run_server_func, args=(args.cert_path, i, pnum))
+                p.start()
+                sp.append(p)
+
+            time.sleep(1)
+            r1 = test_openssl(i, args.base_portnum)
+            r2 = test_gnutls(i, args.base_portnum + 1)
+
+            test_rel[i] = (r1, r2)
+
+            for p in sp:
+                p.join()
+
+            sp = sp[:]
+
+
+        count = 0
+        accept = [0, 0]
+        for k, v in test_rel.iteritems():
+            print "Cert {}: ({}, {})".format(k, v[0], v[1])
+            if v[0] != v[1]:
+                count += 1
+            for i in range(len(v)):
+                if v[i] != 0:
+                    accept[i] += 1
+
+
+        print "Differential count: ", count
+        print "Accept count: " , accept[0], accept[1]
+        if csvw:
+            csvw.writerow([cert_num, accept[0], accept[1], count])
+
+if f:
+    f.close()
