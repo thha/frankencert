@@ -82,12 +82,12 @@ else:
 
 f = None
 csvw = None
+
 if args.outfile:
     f = open(args.outfile, "w")
     csvw = csv.writer(f)
-
-if csvw:
     csvw.writerow(["cert_num", "openssl", "gnutls", "diff"])
+    f.close()
 
 for cert_num in args.cert_num:
     for r in range(args.repeat):
@@ -129,8 +129,11 @@ for cert_num in args.cert_num:
 
         print "Differential count: ", count
         print "Accept count: " , accept[0], accept[1]
-        if csvw:
+        if args.outfile:
+            f = open(args.outfile, "a")
+            csvw = csv.writer(f)
             csvw.writerow([cert_num, accept[0], accept[1], count])
+            f.close()
 
-if f:
-    f.close()
+#if f:
+#    f.close()
